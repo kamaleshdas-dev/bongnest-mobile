@@ -1,3 +1,4 @@
+import "../global.css";
 import FontAwesome from "@expo/vector-icons/FontAwesome";
 import {
   DarkTheme,
@@ -8,16 +9,10 @@ import { useFonts } from "expo-font";
 import { Stack } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
 import { useEffect } from "react";
+import { useColorScheme } from "react-native";
 import "react-native-reanimated";
-export {
-  // Catch any errors thrown by the Layout component.
-  ErrorBoundary,
-export {
-  // Catch any errors thrown by the Layout component.
-  ErrorBoundary
-} from "expo-router";
-  initialRouteName: '(tabs)',
-};
+
+export { ErrorBoundary } from "expo-router";
 
 // Prevent the splash screen from auto-hiding before asset loading is complete.
 SplashScreen.preventAutoHideAsync();
