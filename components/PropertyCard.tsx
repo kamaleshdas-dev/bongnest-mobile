@@ -11,12 +11,15 @@ import {
   Text,
   View,
 } from "react-native";
+import { getPlayablePropertyVideoUrl } from "@/lib/propertyVideo";
 import type { Property } from "@/types/property";
 import { formatMonthlyRent } from "@/lib/formatInr";
 
 type PropertyCardProps = {
   property: Property;
   isActive: boolean;
+  /** When false, do not mount expo-av Video (releases hardware decoder). */
+  reelVideosEnabled: boolean;
 };
 
 function VideoLoadingOverlay() {
@@ -68,15 +71,63 @@ function VideoLoadingOverlay() {
   );
 }
 
-export function PropertyCard({ property, isActive }: PropertyCardProps) {
+export function PropertyCard({
+  property,
+  isActive,
+  reelVideosEnabled,
+}: PropertyCardProps) {
   const [videoReady, setVideoReady] = useState(false);
   const [videoError, setVideoError] = useState(false);
-  const showVideo = Boolean(property.video_url?.trim());
+  const [resolvedUri, setResolvedUri] = useState<string | null>(null);
+
+  const displayUri =
+    resolvedUri ?? property.video_url?.trim() ?? null;
+  const showVideo = Boolean(displayUri);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    if (!isActive || !reelVideosEnabled) {
+      setResolvedUri(null);
+      setVideoReady(false);
+      setVideoError(false);
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    setResolvedUri(null);
+    setVideoReady(false);
+    setVideoError(false);
+
+    (async () => {
+      const uri = await getPlayablePropertyVideoUrl(property);
+      if (!cancelled) {
+        setResolvedUri(uri);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    property.id,
+    property.video_url,
+    property.video_storage_path,
+    isActive,
+    reelVideosEnabled,
+  ]);
 
   useEffect(() => {
     setVideoReady(false);
     setVideoError(false);
-  }, [property.id, property.video_url]);
+  }, [property.id, displayUri, isActive]);
+
+  useEffect(() => {
+    if (!reelVideosEnabled) {
+      setVideoReady(false);
+    }
+  }, [reelVideosEnabled]);
 
   const priceLabel = formatMonthlyRent(property.price_monthly);
 
@@ -86,18 +137,38 @@ export function PropertyCard({ property, isActive }: PropertyCardProps) {
         <View style={{ aspectRatio: 3 / 4 }} className="w-full">
           {showVideo && !videoError ? (
             <>
-              {!videoReady && <VideoLoadingOverlay />}
-              <Video
-                source={{ uri: property.video_url! }}
-                style={[StyleSheet.absoluteFill, { opacity: videoReady ? 1 : 0 }]}
-                resizeMode={ResizeMode.COVER}
-                isLooping
-                isMuted
-                shouldPlay={isActive}
-                useNativeControls={false}
-                onReadyForDisplay={() => setVideoReady(true)}
-                onError={() => setVideoError(true)}
-              />
+              {reelVideosEnabled && isActive && displayUri ? (
+                <>
+                  {!videoReady && <VideoLoadingOverlay />}
+                  <Video
+                    key={`${property.id}-${displayUri}`}
+                    source={{ uri: displayUri }}
+                    style={[
+                      StyleSheet.absoluteFill,
+                      { opacity: videoReady ? 1 : 0 },
+                    ]}
+                    resizeMode={ResizeMode.COVER}
+                    isLooping
+                    isMuted
+                    shouldPlay
+                    useNativeControls={false}
+                    onReadyForDisplay={() => setVideoReady(true)}
+                    onError={() => setVideoError(true)}
+                  />
+                </>
+              ) : reelVideosEnabled && showVideo ? (
+                <View className="flex-1 items-center justify-center bg-neutral-800 dark:bg-neutral-900">
+                  <Text className="text-center text-sm text-white/45">
+                    Scroll to play
+                  </Text>
+                </View>
+              ) : (
+                <View className="flex-1 items-center justify-center bg-neutral-900/90">
+                  <Text className="text-center text-sm text-white/50">
+                    Feed paused
+                  </Text>
+                </View>
+              )}
             </>
           ) : showVideo && videoError ? (
             <View className="flex-1 items-center justify-center bg-neutral-200 px-6 dark:bg-neutral-700">
@@ -133,12 +204,16 @@ export function PropertyCard({ property, isActive }: PropertyCardProps) {
         >
           {property.title}
         </Text>
-        {(property.location || property.area) && (
+        {(property.location ||
+          property.area ||
+          property.area_name) && (
           <Text
             className="text-base leading-6 text-neutral-500 dark:text-neutral-400"
             numberOfLines={2}
           >
-            {[property.area, property.location].filter(Boolean).join(" · ")}
+            {[property.area_name, property.area, property.location]
+              .filter(Boolean)
+              .join(" · ")}
           </Text>
         )}
         {property.description ? (

@@ -4,10 +4,11 @@ import { File } from "expo-file-system";
 import * as ImagePicker from "expo-image-picker";
 import { router } from "expo-router";
 import { Home, IndianRupee, Upload } from "lucide-react-native";
-import { useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  InteractionManager,
   Keyboard,
   KeyboardAvoidingView,
   Platform,
@@ -18,7 +19,9 @@ import {
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { useFocusEffect } from "@react-navigation/native";
 
+import { useVideoFeedSuspension } from "@/contexts/VideoFeedSuspension";
 import { supabase } from "@/lib/supabase";
 
 type PickedVideo = {
@@ -53,6 +56,7 @@ async function uriToBytes(uri: string): Promise<Uint8Array> {
 
 export default function AddPropertyScreen() {
   const videoRef = useRef<Video | null>(null);
+  const { resume } = useVideoFeedSuspension();
 
   const [video, setVideo] = useState<PickedVideo | null>(null);
   const [title, setTitle] = useState("");
@@ -76,7 +80,34 @@ export default function AddPropertyScreen() {
     Number.isFinite(priceNumber) &&
     priceNumber > 0;
 
+  useFocusEffect(
+    useCallback(() => {
+      return () => {
+        resume();
+      };
+    }, [resume]),
+  );
+
+  const releasePreviewDecoder = async () => {
+    try {
+      await videoRef.current?.pauseAsync();
+      await videoRef.current?.unloadAsync();
+    } catch {
+      // ignore
+    }
+  };
+
+  const waitForFeedTeardown = () =>
+    new Promise<void>((resolve) => {
+      InteractionManager.runAfterInteractions(() => {
+        setTimeout(() => resolve(), 400);
+      });
+    });
+
   const pickFromLibrary = async () => {
+    await releasePreviewDecoder();
+    await waitForFeedTeardown();
+
     const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!perm.granted) {
       Alert.alert(
@@ -105,6 +136,9 @@ export default function AddPropertyScreen() {
   };
 
   const recordVideo = async () => {
+    await releasePreviewDecoder();
+    await waitForFeedTeardown();
+
     const perm = await ImagePicker.requestCameraPermissionsAsync();
     if (!perm.granted) {
       Alert.alert(
@@ -177,14 +211,15 @@ export default function AddPropertyScreen() {
 
       if (uploadError) throw uploadError;
 
-      const { data: publicUrlData } = supabase.storage
+      // Signed URL works with private buckets; public URLs often 403 in-app → "Video unavailable".
+      const { data: signedData, error: signError } = await supabase.storage
         .from("property-videos")
-        .getPublicUrl(objectPath);
+        .createSignedUrl(objectPath, 60 * 60 * 24 * 365);
 
-      const publicUrl = publicUrlData?.publicUrl;
-      if (!publicUrl) {
+      const playableUrl = signedData?.signedUrl;
+      if (signError || !playableUrl) {
         throw new Error(
-          "Could not generate a public URL for the uploaded video.",
+          signError?.message ?? "Could not create a playable video URL.",
         );
       }
 
@@ -194,7 +229,7 @@ export default function AddPropertyScreen() {
         price_monthly: Math.round(priceNumber),
         owner_id: userId,
         owner_phone: ownerPhone.trim(),
-        video_url: publicUrl,
+        video_url: playableUrl,
       };
 
       const { error: insertError } = await supabase

@@ -3,8 +3,11 @@ export type Property = {
   id: string;
   title: string;
   video_url: string | null;
+  /** Storage path inside bucket `property-videos` (e.g. uploads/abc.mp4). Optional but recommended. */
+  video_storage_path?: string | null;
   price_monthly: number | null;
   location?: string | null;
   area?: string | null;
+  area_name?: string | null;
   description?: string | null;
 };
