@@ -4,11 +4,14 @@ import {
   FlatList,
   Platform,
   RefreshControl,
+  Pressable,
   Text,
   View,
   type ViewToken,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { router } from "expo-router";
+import { Plus } from "lucide-react-native";
 
 import { PropertyCard } from "@/components/PropertyCard";
 import { supabase } from "@/lib/supabase";
@@ -136,6 +139,15 @@ export default function HomeScreen() {
         windowSize={4}
         removeClippedSubviews={Platform.OS === "android"}
       />
+
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Add property"
+        onPress={() => router.push("/add-property")}
+        className="absolute bottom-6 right-6 h-16 w-16 items-center justify-center rounded-3xl bg-emerald-600 shadow-2xl shadow-emerald-900/30 active:opacity-90"
+      >
+        <Plus size={28} color="#ffffff" strokeWidth={3} />
+      </Pressable>
     </SafeAreaView>
   );
 }
