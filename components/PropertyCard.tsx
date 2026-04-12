@@ -1,6 +1,7 @@
 import { BlurView } from "expo-blur";
 import { Video, ResizeMode } from "expo-av";
 import { LinearGradient } from "expo-linear-gradient";
+import { router, type Href } from "expo-router";
 import { Film, Phone } from "lucide-react-native";
 import { useEffect, useRef, useState } from "react";
 import {
@@ -83,6 +84,10 @@ function areaLine(property: Property) {
     .join(" · ");
 }
 
+function openPropertyDetail(propertyId: string) {
+  router.push(`/(property)/${propertyId}` as Href);
+}
+
 export function PropertyCard(props: PropertyCardProps) {
   if (props.variant === "grid") {
     return <PropertyCardGrid property={props.property} />;
@@ -99,7 +104,12 @@ export function PropertyCard(props: PropertyCardProps) {
 function PropertyCardGrid({ property }: { property: Property }) {
   const priceLabel = formatMonthlyRent(property.price_monthly);
   return (
-    <View className="mb-4 flex-1 overflow-hidden rounded-3xl border border-white/10 bg-neutral-900/80 shadow-lg shadow-black/30">
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={`Open ${property.title}`}
+      onPress={() => openPropertyDetail(property.id)}
+      className="mb-4 flex-1 overflow-hidden rounded-3xl border border-white/10 bg-neutral-900/80 shadow-lg shadow-black/30 active:opacity-92"
+    >
       <View className="relative aspect-[3/4] w-full overflow-hidden rounded-t-3xl bg-neutral-800">
         <LinearGradient
           colors={["#0f172a", "#1e293b", "#0f172a"]}
@@ -137,7 +147,7 @@ function PropertyCardGrid({ property }: { property: Property }) {
           </Text>
         ) : null}
       </View>
-    </View>
+    </Pressable>
   );
 }
 
@@ -200,6 +210,7 @@ function PropertyCardFeed({
   }, [reelVideosEnabled]);
 
   const priceLabel = formatMonthlyRent(property.price_monthly);
+  const goDetail = () => openPropertyDetail(property.id);
 
   return (
     <View className="mx-4 mb-8 overflow-hidden rounded-3xl bg-white shadow-xl shadow-black/10 dark:bg-neutral-900">
@@ -254,8 +265,18 @@ function PropertyCardFeed({
             </View>
           )}
 
+          <Pressable
+            onPress={goDetail}
+            accessibilityRole="button"
+            accessibilityLabel={`Open ${property.title}`}
+            className="absolute inset-0 z-[1]"
+          />
+
           {property.price_monthly != null && (
-            <View className="absolute left-4 top-4 rounded-full bg-emerald-600 px-3.5 py-2 shadow-md shadow-emerald-900/30">
+            <View
+              pointerEvents="none"
+              className="absolute left-4 top-4 z-[2] rounded-full bg-emerald-600 px-3.5 py-2 shadow-md shadow-emerald-900/30"
+            >
               <Text
                 className="text-sm font-semibold text-white"
                 numberOfLines={1}
@@ -267,7 +288,12 @@ function PropertyCardFeed({
         </View>
       </View>
 
-      <View className="gap-1.5 px-5 pb-3 pt-5">
+      <Pressable
+        onPress={goDetail}
+        accessibilityRole="button"
+        accessibilityLabel={`Open ${property.title}`}
+        className="gap-1.5 px-5 pb-3 pt-5 active:opacity-90"
+      >
         <Text
           className="text-xl font-semibold tracking-tight text-neutral-900 dark:text-neutral-50"
           numberOfLines={2}
@@ -290,12 +316,13 @@ function PropertyCardFeed({
             {property.description}
           </Text>
         ) : null}
-      </View>
+      </Pressable>
 
       <View className="px-5 pb-6">
         <Pressable
+          onPress={goDetail}
           accessibilityRole="button"
-          accessibilityLabel="Connect for 99 rupees"
+          accessibilityLabel="Connect for 99 rupees, open listing"
           className="flex-row items-center justify-center gap-2.5 rounded-2xl bg-emerald-600 py-4 shadow-lg shadow-emerald-900/25 active:opacity-90 dark:bg-emerald-500"
         >
           <Phone size={22} color="#ffffff" strokeWidth={2.5} />
