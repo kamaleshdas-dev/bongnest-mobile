@@ -1,6 +1,7 @@
 import { BlurView } from "expo-blur";
 import { Video, ResizeMode } from "expo-av";
-import { Phone } from "lucide-react-native";
+import { LinearGradient } from "expo-linear-gradient";
+import { Film, Phone } from "lucide-react-native";
 import { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -15,11 +16,16 @@ import { getPlayablePropertyVideoUrl } from "@/lib/propertyVideo";
 import type { Property } from "@/types/property";
 import { formatMonthlyRent } from "@/lib/formatInr";
 
-type PropertyCardProps = {
+export type PropertyCardProps = {
   property: Property;
   isActive: boolean;
   /** When false, do not mount expo-av Video (releases hardware decoder). */
   reelVideosEnabled: boolean;
+  /**
+   * `feed` — full reel card with video playback when active.
+   * `grid` — compact card with static thumbnail only (no Video; saves memory).
+   */
+  variant?: "feed" | "grid";
 };
 
 function VideoLoadingOverlay() {
@@ -71,11 +77,75 @@ function VideoLoadingOverlay() {
   );
 }
 
-export function PropertyCard({
+function areaLine(property: Property) {
+  return [property.area_name, property.area, property.location]
+    .filter(Boolean)
+    .join(" · ");
+}
+
+export function PropertyCard(props: PropertyCardProps) {
+  if (props.variant === "grid") {
+    return <PropertyCardGrid property={props.property} />;
+  }
+  return (
+    <PropertyCardFeed
+      property={props.property}
+      isActive={props.isActive}
+      reelVideosEnabled={props.reelVideosEnabled}
+    />
+  );
+}
+
+function PropertyCardGrid({ property }: { property: Property }) {
+  const priceLabel = formatMonthlyRent(property.price_monthly);
+  return (
+    <View className="mb-4 flex-1 overflow-hidden rounded-3xl border border-white/10 bg-neutral-900/80 shadow-lg shadow-black/30">
+      <View className="relative aspect-[3/4] w-full overflow-hidden rounded-t-3xl bg-neutral-800">
+        <LinearGradient
+          colors={["#0f172a", "#1e293b", "#0f172a"]}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={StyleSheet.absoluteFill}
+        />
+        <View className="absolute inset-0 items-center justify-center">
+          <Film size={36} color="rgba(167,243,208,0.45)" strokeWidth={1.5} />
+          <Text className="mt-2 text-[11px] font-medium uppercase tracking-widest text-white/35">
+            Preview
+          </Text>
+        </View>
+        {property.price_monthly != null && (
+          <View className="absolute left-2 top-2 rounded-full bg-emerald-600 px-2.5 py-1 shadow-md shadow-emerald-900/40">
+            <Text
+              className="text-[11px] font-bold text-white"
+              numberOfLines={1}
+            >
+              {priceLabel}
+            </Text>
+          </View>
+        )}
+      </View>
+      <View className="gap-1 px-3 pb-3 pt-2.5">
+        <Text
+          className="text-sm font-semibold leading-5 text-white"
+          numberOfLines={2}
+        >
+          {property.title}
+        </Text>
+        {areaLine(property) ? (
+          <Text className="text-xs text-white/45" numberOfLines={1}>
+            {areaLine(property)}
+          </Text>
+        ) : null}
+      </View>
+    </View>
+  );
+}
+
+function PropertyCardFeed({
   property,
   isActive,
   reelVideosEnabled,
-}: PropertyCardProps) {
+}: Omit<PropertyCardProps, "variant">) {
   const [videoReady, setVideoReady] = useState(false);
   const [videoError, setVideoError] = useState(false);
   const [resolvedUri, setResolvedUri] = useState<string | null>(null);
@@ -204,18 +274,14 @@ export function PropertyCard({
         >
           {property.title}
         </Text>
-        {(property.location ||
-          property.area ||
-          property.area_name) && (
+        {areaLine(property) ? (
           <Text
             className="text-base leading-6 text-neutral-500 dark:text-neutral-400"
             numberOfLines={2}
           >
-            {[property.area_name, property.area, property.location]
-              .filter(Boolean)
-              .join(" · ")}
+            {areaLine(property)}
           </Text>
-        )}
+        ) : null}
         {property.description ? (
           <Text
             className="pt-1 text-sm leading-5 text-neutral-600 dark:text-neutral-400"
