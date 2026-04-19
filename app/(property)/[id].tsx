@@ -8,6 +8,7 @@ import { StatusBar } from "expo-status-bar";
 import { ArrowLeft, Film, MapPin, PhoneCall, Share2, X } from "lucide-react-native";
 import {
   ActivityIndicator,
+  Alert,
   Linking,
   Modal,
   Platform,
@@ -23,6 +24,12 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { formatMonthlyRent } from "@/lib/formatInr";
 import {
+  CONNECT_UNLOCK_FEE_PAISE,
+  getRazorpayKeyId,
+  RAZORPAY_CHECKOUT_DESCRIPTION,
+  RAZORPAY_MERCHANT_NAME,
+} from "@/lib/razorpayConfig";
+import {
   getPlayablePropertyVideoUrl,
   isSupabasePublicObjectVideoUrl,
 } from "@/lib/propertyVideo";
@@ -33,6 +40,31 @@ function areaLine(property: Property) {
   return [property.area_name, property.area, property.location]
     .filter(Boolean)
     .join(" · ");
+}
+
+function parseRazorpayFailure(err: unknown): { cancelled: boolean; message: string } {
+  const e = err as {
+    code?: string | number;
+    description?: string;
+    message?: string;
+    error?: { description?: string };
+  };
+  const message =
+    e?.description ??
+    e?.error?.description ??
+    e?.message ??
+    (typeof err === "string" ? err : "Payment could not be completed.");
+  const lower = String(message).toLowerCase();
+  const code = e?.code;
+  const cancelled =
+    code === 0 ||
+    code === "0" ||
+    code === 2 ||
+    code === "2" ||
+    lower.includes("cancel") ||
+    lower.includes("back") ||
+    lower.includes("dismiss");
+  return { cancelled, message: String(message) };
 }
 
 export default function PropertyDetailScreen() {
@@ -53,6 +85,7 @@ export default function PropertyDetailScreen() {
   const [videoReady, setVideoReady] = useState(false);
   const [videoError, setVideoError] = useState(false);
   const [paymentOpen, setPaymentOpen] = useState(false);
+  const [paymentInProgress, setPaymentInProgress] = useState(false);
   const [isUnlocked, setIsUnlocked] = useState(false);
 
   const videoHeight = Math.min((winW * 16) / 9, winH * 0.68);
@@ -154,10 +187,74 @@ export default function PropertyDetailScreen() {
     playableUri == null &&
     !videoError;
 
-  const handlePayment = useCallback(() => {
-    setIsUnlocked(true);
-    setPaymentOpen(false);
-  }, []);
+  const handlePayment = useCallback(async () => {
+    const keyId = getRazorpayKeyId();
+    if (!keyId) {
+      Alert.alert(
+        "Configuration required",
+        "Add EXPO_PUBLIC_RAZORPAY_KEY_ID to your environment (e.g. rzp_test_… from the Razorpay dashboard), then restart Expo.",
+      );
+      return;
+    }
+
+    if (Platform.OS === "web") {
+      Alert.alert(
+        "Not available on web",
+        "Open this screen in the BongNest iOS or Android app to complete payment.",
+      );
+      return;
+    }
+
+    if (paymentInProgress) return;
+    setPaymentInProgress(true);
+
+    try {
+      const { data: authData, error: authError } = await supabase.auth.getUser();
+      if (authError) {
+        Alert.alert("Sign in required", authError.message);
+        return;
+      }
+      const user = authData.user;
+      const meta = user?.user_metadata as
+        | { full_name?: string; phone?: string }
+        | undefined;
+
+      const options: Record<string, unknown> = {
+        description: RAZORPAY_CHECKOUT_DESCRIPTION,
+        currency: "INR",
+        key: keyId,
+        amount: String(CONNECT_UNLOCK_FEE_PAISE),
+        name: RAZORPAY_MERCHANT_NAME,
+        prefill: {
+          email: user?.email ?? "",
+          contact: meta?.phone ?? "",
+          name: meta?.full_name ?? user?.email?.split("@")[0] ?? "",
+        },
+        theme: { color: "#10b981" },
+      };
+
+      // Native module — require at runtime so Metro/web don't resolve it at load time.
+      const RazorpayCheckout = require("react-native-razorpay")
+        .default as typeof import("react-native-razorpay").default;
+
+      await RazorpayCheckout.open(options);
+
+      setIsUnlocked(true);
+      setPaymentOpen(false);
+    } catch (err: unknown) {
+      const { cancelled, message } = parseRazorpayFailure(err);
+      if (cancelled) {
+        Alert.alert(
+          "Payment cancelled",
+          "No charge was made. You can try again when you're ready.",
+        );
+      } else {
+        Alert.alert("Payment failed", message);
+      }
+    } finally {
+      setPaymentInProgress(false);
+    }
+  }, [paymentInProgress]);
 
   const onCallOwner = useCallback(async () => {
     if (!ownerPhone) return;
@@ -448,23 +545,22 @@ export default function PropertyDetailScreen() {
             </View>
             <View className="gap-3 px-5 py-6">
               <Text className="text-base leading-6 text-white/75">
-                Checkout will open here. Razorpay payment integration is coming
-                next — you'll be able to complete a secure ₹99 connect fee
-                in one tap.
+                Pay a one-time ₹99 connect fee via Razorpay. After a successful
+                payment, the owner&apos;s phone number is unlocked so you can
+                call them directly.
               </Text>
-              <View className="mt-2 rounded-2xl border border-dashed border-emerald-500/40 bg-emerald-500/10 px-4 py-5">
-                <Text className="text-center text-sm font-medium text-emerald-200/90">
-                  Placeholder: Razorpay SDK / hosted checkout
-                </Text>
-              </View>
               <Pressable
-                onPress={handlePayment}
+                onPress={() => void handlePayment()}
+                disabled={paymentInProgress}
                 accessibilityRole="button"
-                accessibilityLabel="Simulate payment"
-                className="mt-3 items-center justify-center rounded-2xl bg-emerald-500 py-4 active:opacity-90"
+                accessibilityLabel="Pay 99 rupees with Razorpay"
+                className="mt-3 flex-row items-center justify-center gap-2 rounded-2xl bg-emerald-500 py-4 active:opacity-90 disabled:opacity-60"
               >
+                {paymentInProgress ? (
+                  <ActivityIndicator color="#fff" />
+                ) : null}
                 <Text className="text-base font-bold text-white">
-                  Simulate payment (unlock)
+                  {paymentInProgress ? "Opening checkout…" : "Pay ₹99 with Razorpay"}
                 </Text>
               </Pressable>
             </View>
