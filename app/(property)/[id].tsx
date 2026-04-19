@@ -5,9 +5,10 @@ import { ResizeMode, Video } from "expo-av";
 import { LinearGradient } from "expo-linear-gradient";
 import { router, useLocalSearchParams } from "expo-router";
 import { StatusBar } from "expo-status-bar";
-import { ArrowLeft, Film, MapPin, Share2, X } from "lucide-react-native";
+import { ArrowLeft, Film, MapPin, PhoneCall, Share2, X } from "lucide-react-native";
 import {
   ActivityIndicator,
+  Linking,
   Modal,
   Platform,
   Pressable,
@@ -21,7 +22,10 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { formatMonthlyRent } from "@/lib/formatInr";
-import { getPlayablePropertyVideoUrl } from "@/lib/propertyVideo";
+import {
+  getPlayablePropertyVideoUrl,
+  isSupabasePublicObjectVideoUrl,
+} from "@/lib/propertyVideo";
 import { supabase } from "@/lib/supabase";
 import type { Property } from "@/types/property";
 
@@ -49,6 +53,7 @@ export default function PropertyDetailScreen() {
   const [videoReady, setVideoReady] = useState(false);
   const [videoError, setVideoError] = useState(false);
   const [paymentOpen, setPaymentOpen] = useState(false);
+  const [isUnlocked, setIsUnlocked] = useState(false);
 
   const videoHeight = Math.min((winW * 16) / 9, winH * 0.68);
   const bottomBarSpace = 88 + insets.bottom;
@@ -99,14 +104,32 @@ export default function PropertyDetailScreen() {
   }, [id]);
 
   useEffect(() => {
+    setVideoReady(false);
+    setVideoError(false);
+
     if (!property) {
       setPlayableUri(null);
       return;
     }
+
+    if (!isFocused) {
+      setPlayableUri(null);
+      return;
+    }
+
+    const raw = property.video_url?.trim();
+    if (!raw) {
+      setPlayableUri(null);
+      return;
+    }
+
+    if (isSupabasePublicObjectVideoUrl(raw)) {
+      setPlayableUri(raw);
+      return;
+    }
+
     let cancelled = false;
     setPlayableUri(null);
-    setVideoReady(false);
-    setVideoError(false);
 
     (async () => {
       const uri = await getPlayablePropertyVideoUrl(property);
@@ -116,12 +139,34 @@ export default function PropertyDetailScreen() {
     return () => {
       cancelled = true;
     };
-  }, [property]);
+  }, [property, isFocused]);
 
   const priceLabel = property ? formatMonthlyRent(property.price_monthly) : "—";
   const area = property ? areaLine(property) : "";
+  const ownerPhone = property?.owner_phone?.trim() || null;
   const shouldPlayVideo =
     isFocused && videoReady && Boolean(playableUri) && !videoError;
+
+  const trimmedVideoUrl = property?.video_url?.trim() ?? "";
+  const videoResolving =
+    isFocused &&
+    Boolean(trimmedVideoUrl) &&
+    playableUri == null &&
+    !videoError;
+
+  const handlePayment = useCallback(() => {
+    setIsUnlocked(true);
+    setPaymentOpen(false);
+  }, []);
+
+  const onCallOwner = useCallback(async () => {
+    if (!ownerPhone) return;
+    try {
+      await Linking.openURL(`tel:${ownerPhone}`);
+    } catch {
+      /* ignore */
+    }
+  }, [ownerPhone]);
 
   const onShare = useCallback(async () => {
     if (!property) return;
@@ -201,7 +246,17 @@ export default function PropertyDetailScreen() {
             style={StyleSheet.absoluteFill}
           />
 
-          {playableUri && !videoError ? (
+          {!isFocused ? (
+            <View className="flex-1 items-center justify-center px-6">
+              <Text className="text-center text-sm text-white/40">
+                Video paused while away
+              </Text>
+            </View>
+          ) : videoResolving ? (
+            <View className="flex-1 items-center justify-center">
+              <ActivityIndicator size="large" color="#34d399" />
+            </View>
+          ) : playableUri && !videoError ? (
             <Video
               key={`${property.id}-${playableUri}`}
               source={{ uri: playableUri }}
@@ -306,6 +361,17 @@ export default function PropertyDetailScreen() {
             </View>
           ) : null}
 
+          {isUnlocked && ownerPhone ? (
+            <View className="mt-5 rounded-2xl border border-emerald-500/20 bg-emerald-500/10 px-4 py-4">
+              <Text className="text-xs font-semibold uppercase tracking-[0.2em] text-emerald-300/90">
+                Owner phone
+              </Text>
+              <Text className="mt-2 text-lg font-semibold text-white">
+                {ownerPhone}
+              </Text>
+            </View>
+          ) : null}
+
           <View className="mt-10 border-t border-white/10 pt-8">
             <Text className="text-xs font-semibold uppercase tracking-[0.2em] text-emerald-400/90">
               About this place
@@ -329,14 +395,27 @@ export default function PropertyDetailScreen() {
           paddingBottom: Math.max(insets.bottom, 12) + 8,
         }}
       >
-        <Pressable
-          onPress={() => setPaymentOpen(true)}
-          accessibilityRole="button"
-          accessibilityLabel="Connect for 99 rupees"
-          className="items-center justify-center rounded-2xl bg-emerald-500 py-4 shadow-lg shadow-emerald-900/30 active:opacity-92"
-        >
-          <Text className="text-lg font-bold text-white">Connect for ₹99</Text>
-        </Pressable>
+        {!isUnlocked ? (
+          <Pressable
+            onPress={() => setPaymentOpen(true)}
+            accessibilityRole="button"
+            accessibilityLabel="Connect for 99 rupees"
+            className="items-center justify-center rounded-2xl bg-emerald-500 py-4 shadow-lg shadow-emerald-900/30 active:opacity-92"
+          >
+            <Text className="text-lg font-bold text-white">Connect for ₹99</Text>
+          </Pressable>
+        ) : (
+          <Pressable
+            onPress={onCallOwner}
+            disabled={!ownerPhone}
+            accessibilityRole="button"
+            accessibilityLabel="Call owner"
+            className="flex-row items-center justify-center gap-3 rounded-2xl bg-white/10 py-4 active:opacity-92 disabled:opacity-50"
+          >
+            <PhoneCall size={22} color="#a7f3d0" strokeWidth={2.3} />
+            <Text className="text-lg font-bold text-white">Call Owner</Text>
+          </Pressable>
+        )}
       </View>
 
       <Modal
@@ -378,6 +457,16 @@ export default function PropertyDetailScreen() {
                   Placeholder: Razorpay SDK / hosted checkout
                 </Text>
               </View>
+              <Pressable
+                onPress={handlePayment}
+                accessibilityRole="button"
+                accessibilityLabel="Simulate payment"
+                className="mt-3 items-center justify-center rounded-2xl bg-emerald-500 py-4 active:opacity-90"
+              >
+                <Text className="text-base font-bold text-white">
+                  Simulate payment (unlock)
+                </Text>
+              </Pressable>
             </View>
           </View>
         </View>

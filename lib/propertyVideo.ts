@@ -3,6 +3,15 @@ import type { Property } from "@/types/property";
 
 const BUCKET = "property-videos";
 
+/** True when the URL is already a Supabase Storage public object URL (no signing needed). */
+export function isSupabasePublicObjectVideoUrl(
+  videoUrl: string | null | undefined,
+): boolean {
+  const raw = videoUrl?.trim();
+  if (!raw) return false;
+  return raw.includes("/object/public/");
+}
+
 /**
  * Extract object path inside the bucket from a Supabase Storage URL
  * (public, sign, or authenticated URL shapes).
@@ -31,7 +40,7 @@ export async function getPlayablePropertyVideoUrl(
 
   // Public object URLs work in-browser and in expo-av; re-signing can fail per-object
   // and is unnecessary here—use the URL as-is.
-  if (raw.includes("/object/public/")) {
+  if (isSupabasePublicObjectVideoUrl(raw)) {
     return raw;
   }
 
