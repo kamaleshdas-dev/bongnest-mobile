@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useFocusEffect } from "@react-navigation/native";
+import { useFocusEffect, useIsFocused } from "@react-navigation/native";
 import {
   ActivityIndicator,
   FlatList,
@@ -12,17 +12,22 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { router, usePathname } from "expo-router";
 import { Plus } from "lucide-react-native";
-import { useIsFocused } from "@react-navigation/native";
 
 import { PropertyCard } from "@/components/PropertyCard";
 import { useVideoFeedSuspension } from "@/contexts/VideoFeedSuspension";
 import { supabase } from "@/lib/supabase";
-import type { Property } from "@/types/property";
+import type { PropertyFeedItem } from "@/types/property";
 
 const VIEWABILITY_CONFIG = {
   itemVisiblePercentThreshold: 65,
   minimumViewTime: 280,
 };
+
+/** Lean projection for feed cards + video resolution (no description / owner_phone). */
+const FEED_COLUMNS =
+  "id,title,video_url,video_storage_path,price_monthly,area_name,created_at" as const;
+
+const FEED_PAGE_SIZE = 15;
 
 export default function HomeScreen() {
   const pathname = usePathname();
@@ -42,63 +47,78 @@ export default function HomeScreen() {
     !suspended &&
     !pathname?.includes("add-property");
 
-  const [properties, setProperties] = useState<Property[]>([]);
+  const [properties, setProperties] = useState<PropertyFeedItem[]>([]);
+  const propertiesRef = useRef<PropertyFeedItem[]>([]);
+  useEffect(() => {
+    propertiesRef.current = properties;
+  }, [properties]);
+
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [activeId, setActiveId] = useState<string | null>(null); // always string id for stable === with item.id
-  const firstFocus = useRef(true);
+  const [hasMore, setHasMore] = useState(true);
+  const [activeId, setActiveId] = useState<string | null>(null);
 
-  const onViewableItemsChanged = useRef(
-    ({ viewableItems }: { viewableItems: ViewToken[] }) => {
-      const rows = viewableItems.filter(
-        (v) =>
-          v.isViewable &&
-          v.item != null &&
-          typeof v.item === "object" &&
-          "id" in v.item,
-      ) as (ViewToken & { item: Property })[];
-      if (rows.length === 0) return;
-      // Stable "primary" cell: smallest list index among visible rows (topmost in data order).
-      rows.sort((a, b) => (a.index ?? 0) - (b.index ?? 0));
-      const primary = rows[0]?.item;
-      if (primary?.id != null) {
-        setActiveId(String(primary.id));
+  const feedBootstrappedRef = useRef(false);
+  const fetchInFlightRef = useRef(false);
+
+  const fetchFeedPage = useCallback(
+    async (opts: { reset: boolean }) => {
+      if (fetchInFlightRef.current) return;
+      const offset = opts.reset ? 0 : propertiesRef.current.length;
+      if (!opts.reset && !hasMore) return;
+
+      fetchInFlightRef.current = true;
+      if (opts.reset) {
+        setLoading(true);
+        setError(null);
+        setHasMore(true);
+      } else {
+        setLoadingMore(true);
+      }
+
+      try {
+        const { data, error: queryError } = await supabase
+          .from("properties")
+          .select(FEED_COLUMNS)
+          .order("created_at", { ascending: false })
+          .range(offset, offset + FEED_PAGE_SIZE - 1);
+
+        if (queryError) {
+          setError(queryError.message);
+          if (opts.reset) setProperties([]);
+          setHasMore(false);
+          return;
+        }
+
+        const rows = (data as PropertyFeedItem[]) ?? [];
+        setError(null);
+        setHasMore(rows.length === FEED_PAGE_SIZE);
+
+        if (opts.reset) {
+          setProperties(rows);
+        } else {
+          setProperties((prev) => [...prev, ...rows]);
+        }
+      } finally {
+        fetchInFlightRef.current = false;
+        setLoading(false);
+        setLoadingMore(false);
+        setRefreshing(false);
       }
     },
-  ).current;
-
-  const fetchProperties = useCallback(async () => {
-    const { data, error: queryError } = await supabase
-      .from("properties")
-      .select("*");
-
-    if (queryError) {
-      setError(queryError.message);
-      return;
-    }
-
-    setProperties((data as Property[]) ?? []);
-    setError(null);
-  }, []);
+    [hasMore],
+  );
 
   useFocusEffect(
     useCallback(() => {
-      let cancelled = false;
-      (async () => {
-        if (firstFocus.current) {
-          setLoading(true);
-          firstFocus.current = false;
-        }
-        await fetchProperties();
-        if (!cancelled) {
-          setLoading(false);
-        }
-      })();
-      return () => {
-        cancelled = true;
-      };
-    }, [fetchProperties]),
+      if (feedBootstrappedRef.current) {
+        return;
+      }
+      feedBootstrappedRef.current = true;
+      void fetchFeedPage({ reset: true });
+    }, [fetchFeedPage]),
   );
 
   useEffect(() => {
@@ -113,11 +133,34 @@ export default function HomeScreen() {
     }
   }, [reelVideosEnabled]);
 
+  const onViewableItemsChanged = useRef(
+    ({ viewableItems }: { viewableItems: ViewToken[] }) => {
+      const rows = viewableItems.filter(
+        (v) =>
+          v.isViewable &&
+          v.item != null &&
+          typeof v.item === "object" &&
+          "id" in v.item,
+      ) as (ViewToken & { item: PropertyFeedItem })[];
+      if (rows.length === 0) return;
+      rows.sort((a, b) => (a.index ?? 0) - (b.index ?? 0));
+      const primary = rows[0]?.item;
+      if (primary?.id != null) {
+        setActiveId(String(primary.id));
+      }
+    },
+  ).current;
+
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
-    await fetchProperties();
-    setRefreshing(false);
-  }, [fetchProperties]);
+    setHasMore(true);
+    await fetchFeedPage({ reset: true });
+  }, [fetchFeedPage]);
+
+  const onEndReached = useCallback(() => {
+    if (loading || loadingMore || refreshing || !hasMore) return;
+    void fetchFeedPage({ reset: false });
+  }, [loading, loadingMore, refreshing, hasMore, fetchFeedPage]);
 
   if (loading && properties.length === 0) {
     return (
@@ -155,6 +198,13 @@ export default function HomeScreen() {
             </Text>
           </View>
         }
+        ListFooterComponent={
+          loadingMore ? (
+            <View className="py-6">
+              <ActivityIndicator color="#059669" />
+            </View>
+          ) : null
+        }
         ListEmptyComponent={
           <View className="items-center px-10 py-20">
             <Text className="text-center text-base leading-6 text-neutral-500 dark:text-neutral-400">
@@ -172,6 +222,8 @@ export default function HomeScreen() {
             colors={["#059669"]}
           />
         }
+        onEndReached={onEndReached}
+        onEndReachedThreshold={0.35}
         showsVerticalScrollIndicator={false}
         contentContainerStyle={
           properties.length === 0
@@ -181,7 +233,6 @@ export default function HomeScreen() {
         initialNumToRender={2}
         maxToRenderPerBatch={2}
         windowSize={4}
-        // Video + Android: clipping subviews breaks players and decoder reuse.
         removeClippedSubviews={false}
       />
 

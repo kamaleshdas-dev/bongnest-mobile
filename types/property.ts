@@ -14,3 +14,15 @@ export type Property = {
   description?: string | null;
   owner_phone?: string | null;
 };
+
+/** Columns returned by home feed queries — avoids heavy fields (e.g. description). */
+export type PropertyFeedItem = Pick<
+  Property,
+  | "id"
+  | "title"
+  | "video_url"
+  | "video_storage_path"
+  | "price_monthly"
+  | "area_name"
+  | "created_at"
+>;
